@@ -4,3 +4,4 @@ fastapi==0.115.0
 uvicorn==0.30.1
 redis==5.0.8
 requests==2.32.3
+finnhub-python==2.4.20

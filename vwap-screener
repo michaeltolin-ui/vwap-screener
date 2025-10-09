@@ -1,0 +1,115 @@
+import streamlit as st
+import pandas as pd
+import time
+import io
+import base64
+
+# Sample data for Demo Mode
+sample_data = [
+    {"ticker": "AAPL", "avgVol30d": 12000000, "last": 150.25, "vwap": 149.00, "sma8Slope": 0.02},
+    {"ticker": "MSFT", "avgVol30d": 15000000, "last": 305.10, "vwap": 302.50, "sma8Slope": 0.01},
+]
+
+# Preset list of major stocks
+preset_stocks = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "JPM", "WMT", "V"]
+
+def clean_tickers(tickers):
+    """Clean and normalize ticker input."""
+    return [t.replace("-", ".").upper().strip() for t in tickers.replace(",", " ").split() if t]
+
+def fetch_stock_data(ticker, delay, demo_mode):
+    """Simulate fetching stock data with a delay."""
+    time.sleep(delay / 1000)  # Convert ms to seconds
+    if demo_mode:
+        return next((item for item in sample_data if item["ticker"] == ticker), None)
+    # Placeholder for real API call
+    return None
+
+def run_scan(tickers, min_volume, interval, max_tickers, demo_mode, pacing_delay):
+    """Run the VWAP snapback scan."""
+    results = []
+    capped_tickers = tickers[:max_tickers]
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    for i, ticker in enumerate(capped_tickers):
+        status_text.text(f"Scanning: {ticker}")
+        progress_bar.progress((i + 1) / len(capped_tickers))
+        try:
+            data = fetch_stock_data(ticker, pacing_delay, demo_mode)
+            if data and data["avgVol30d"] >= min_volume and data["last"] >= 1.005 * data["vwap"] and abs(data["sma8Slope"]) <= 0.05:
+                data["priceVwapPct"] = (data["last"] - data["vwap"]) / data["vwap"] * 100
+                results.append(data)
+        except Exception as e:
+            st.error(f"Error processing {ticker}: {str(e)}. Enable Demo Mode or check API.")
+            return []
+
+    progress_bar.empty()
+    status_text.empty()
+    return results
+
+def get_csv_download_link(df):
+    """Generate a download link for CSV."""
+    csv = df.to_csv(index=False)
+    b64 = base64.b64encode(csv.encode()).decode()
+    return f'<a href="data:file/csv;base64,{b64}" download="vwap_snapback_results.csv">Download CSV</a>'
+
+# Streamlit app
+st.set_page_config(page_title="VWAP Snapback Screener", layout="wide")
+
+# Sidebar
+with st.sidebar:
+    st.header("Screener Controls")
+    universe = st.selectbox("Stock Universe", ["Preset Major Stocks", "Custom List"], help="Choose between preset or custom tickers")
+    custom_tickers = ""
+    if universe == "Custom List":
+        custom_tickers = st.text_area("Custom Tickers", placeholder="Enter tickers (e.g., AAPL, MSFT, BRK-B)", help="Separate tickers with commas or spaces")
+    
+    min_volume = st.number_input("Min Avg Volume (30d)", min_value=0, value=10000000, step=100000, help="Minimum average daily volume over 30 days")
+    interval = st.selectbox("Interval", ["1 minute", "5 minutes", "15 minutes"], index=1, help="Intraday candlestick interval")
+    max_tickers = st.slider("Max Tickers", 10, 200, 80, help="Maximum number of tickers to scan")
+    demo_mode = st.checkbox("Demo Mode", help="Use sample data instead of live API")
+    pacing_delay = st.number_input("Pacing Delay (ms)", min_value=0, value=500, step=100, help="Delay between API requests to avoid rate limits")
+    run_button = st.button("Run Scan", type="primary")
+
+# Main content
+st.title("VWAP Snapback Screener — Rules Edition")
+st.caption("AvgVol30d ≥ 10M • Price ≥ 1.005×VWAP • SMA8 flattening")
+st.caption("Environment: Demo v1.0")
+
+# Rules in Effect
+with st.expander("Rules in Effect"):
+    st.write(f"- Min Avg Volume (30d): {min_volume:,}")
+    st.write("- VWAP Gap: ≥ 0.5%")
+    st.write("- SMA8 Slope: ≤ ±0.05%/bar")
+    st.write(f"- Interval: {interval}")
+    st.write(f"- Symbol Cap: {max_tickers}")
+
+# Run scan
+if run_button:
+    tickers = preset_stocks if universe == "Preset Major Stocks" else clean_tickers(custom_tickers)
+    if not tickers:
+        st.warning("No tickers provided. Please enter valid tickers or select preset list.")
+    else:
+        with st.spinner(f"Scanning {len(tickers[:max_tickers])} tickers..."):
+            results = run_scan(tickers, min_volume, interval.split()[0], max_tickers, demo_mode, pacing_delay)
+            
+            if results:
+                df = pd.DataFrame(results)
+                df["priceVwapPct"] = df["priceVwapPct"].map("{:.2f}%".format)
+                df["sma8Slope"] = df["sma8Slope"].map("{:.3f}".format)
+                df["last"] = df["last"].map("{:.2f}".format)
+                df["vwap"] = df["vwap"].map("{:.2f}".format)
+                df["avgVol30d"] = df["avgVol30d"].map("{:,}".format)
+                df["Chart"] = df["ticker"].apply(lambda x: f'<a href="https://finance.yahoo.com/quote/{x}" target="_blank">View</a>')
+                df = df[["ticker", "avgVol30d", "last", "vwap", "priceVwapPct", "sma8Slope", "Chart"]]
+                df.columns = ["Ticker", "AvgVol 30d", "Last", "VWAP", "Price − VWAP (%)", "SMA8 Slope (%/bar)", "Chart"]
+                
+                st.markdown(get_csv_download_link(df), unsafe_allow_html=True)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            else:
+                st.warning("No symbols meet the criteria. Try adjusting filters or intervals.")
+
+# Debug Info
+st.subheader("Debug Info")
+st.write(f"Top 20 tickers by volume: {', '.join(preset_stocks[:20])}")

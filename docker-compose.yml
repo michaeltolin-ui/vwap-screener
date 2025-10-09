@@ -1,0 +1,30 @@
+version: "3.8"
+services:
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    ports:
+      - "8501:8501"
+    depends_on:
+      - fastapi
+    environment:
+      - BACKEND_URL=http://fastapi:8000
+    volumes:
+      - .:/app
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    environment:
+      - REDIS_HOST=redis
+
+  redis:
+    image: redis:7.0
+    ports:
+      - "6379:6379"
